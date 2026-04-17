@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-"""每日自動寄送中文財經新聞（多來源備援）"""
+# -*- coding: utf-8 -*-
 
-from __future__ import annotations
+"""
+抓 RSS 新聞 → 翻譯成中文 → 寄 Gmail（含除錯）
+"""
 
 import os
 import smtplib
@@ -9,102 +11,81 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from email.message import EmailMessage
 
-
-# ✅ 多個RSS來源（避免404）
-RSS_FEEDS = [
-    "https://news.cnyes.com/rss/news/cat/headline",  # 鉅亨網（推薦）
-    "https://news.cnyes.com/rss/news/cat/tw_stock",  # 台股
-    "https://feeds.bbci.co.uk/zhongwen/trad/business/rss.xml",  # BBC中文
-]
-
-GMAIL_SMTP_HOST = "smtp.gmail.com"
-GMAIL_SMTP_PORT = 465
+# 👉 可改成你想要的新聞來源
+FEED_URL = "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml"
 
 
-# 👉 抓RSS
-def fetch_feed(url: str) -> bytes:
-    request = urllib.request.Request(
-        url,
-        headers={"User-Agent": "news-bot/1.0"},
-    )
-    with urllib.request.urlopen(request, timeout=15) as response:
-        return response.read()
+def fetch_feed(url):
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=15) as res:
+        return res.read()
 
 
-# 👉 解析標題
-def parse_titles(feed_data: bytes, limit: int = 5) -> list[str]:
-    root = ET.fromstring(feed_data)
+def parse_titles(xml_data, limit=5):
+    root = ET.fromstring(xml_data)
     titles = []
-
     for item in root.findall(".//item"):
-        title = item.findtext("title")
-        if title:
-            titles.append(title.strip())
+        t = item.findtext("title")
+        if t:
+            titles.append(t.strip())
         if len(titles) >= limit:
             break
-
     return titles
 
 
-# 👉 自動找可用RSS（避免壞掉）
-def get_news(limit=5):
-    for url in RSS_FEEDS:
-        try:
-            data = fetch_feed(url)
-            titles = parse_titles(data, limit)
-            if titles:
-                return titles, url
-        except Exception:
-            continue
-    return [], "無可用來源"
+# 🔥 用 Google 翻譯（免費，不用API）
+def translate(text):
+    try:
+        url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=zh-TW&dt=t&q=" + urllib.parse.quote(text)
+        with urllib.request.urlopen(url) as res:
+            result = eval(res.read().decode())
+            return result[0][0][0]
+    except:
+        return text  # 翻譯失敗就維持原文
 
 
-# 👉 寄信
-def send_email(titles, source_url):
-    gmail_address = os.environ.get("GMAIL_ADDRESS")
-    gmail_app_password = os.environ.get("GMAIL_APP_PASSWORD")
-    recipient = os.environ.get("NEWS_RECIPIENT")
+def send_email(titles):
+    gmail = os.environ.get("GMAIL_ADDRESS")
+    password = os.environ.get("GMAIL_APP_PASSWORD")
+    to = os.environ.get("NEWS_RECIPIENT")
 
-    if not all([gmail_address, gmail_app_password, recipient]):
-        raise RuntimeError("缺少 Gmail 設定")
+    print("DEBUG:")
+    print("EMAIL:", gmail)
+    print("PASSWORD長度:", len(password) if password else 0)
+    print("TO:", to)
+
+    if not gmail or not password or not to:
+        raise Exception("❌ 環境變數沒抓到！")
+
+    # 👉 中文標題
+    translated = [translate(t) for t in titles]
+
+    content = "📢 今日新聞（中文）\n\n"
+    for i, t in enumerate(translated, 1):
+        content += f"{i}. {t}\n"
 
     msg = EmailMessage()
-    msg["Subject"] = "📊 今日全球財經新聞"
-    msg["From"] = gmail_address
-    msg["To"] = recipient
-
-    content = f"""📊 今日精選財經新聞
-
-來源：{source_url}
-
-"""
-
-    for i, title in enumerate(titles, 1):
-        content += f"{i}. {title}\n"
-
-    content += "\n———\nAI 自動新聞系統 🤖"
-
+    msg["Subject"] = "📢 今日新聞（自動寄送）"
+    msg["From"] = gmail
+    msg["To"] = to
     msg.set_content(content)
 
-    with smtplib.SMTP_SSL(GMAIL_SMTP_HOST, GMAIL_SMTP_PORT) as smtp:
-        smtp.login(gmail_address, gmail_app_password)
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
+        smtp.login(gmail, password)
         smtp.send_message(msg)
 
+    print("✅ Email sent!")
 
-# 👉 主程式
+
 def main():
-    titles, source = get_news()
+    data = fetch_feed(FEED_URL)
+    titles = parse_titles(data)
 
     if not titles:
         print("❌ 沒抓到新聞")
         return
 
-    print("抓到新聞：")
-    for t in titles:
-        print(t)
-
-    send_email(titles, source)
-    print("✅ 已寄出 Email")
+    send_email(titles)
 
 
 if __name__ == "__main__":
