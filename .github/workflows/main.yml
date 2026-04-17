@@ -2,12 +2,17 @@ name: Send Daily News Email
 
 on:
   schedule:
-    - cron: '0 8 * * *'  # 每天台灣下午4點（UTC+8）
+    - cron: '0 8 * * *'   # 每天台灣時間下午4點
   workflow_dispatch:
 
 jobs:
   send-email:
     runs-on: ubuntu-latest
+
+    env:
+      GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+      GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+      NEWS_RECIPIENT: ${{ secrets.NEWS_RECIPIENT }}
 
     steps:
       - name: Checkout code
@@ -16,12 +21,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.10'
+          python-version: '3.11'
 
       - name: Run script
-        env:
-          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
-          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
-          NEWS_RECIPIENT: ${{ secrets.NEWS_RECIPIENT }}
-        run: |
-          python rss_top_titles.py
+        run: python rss_top_titles.py
