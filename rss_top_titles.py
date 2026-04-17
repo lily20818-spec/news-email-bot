@@ -1,18 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""
-抓 RSS 新聞 → 翻譯成中文 → 寄 Gmail（含除錯）
-"""
-
 import os
 import smtplib
 import urllib.request
 import xml.etree.ElementTree as ET
 from email.message import EmailMessage
+import requests
 
-# 👉 可改成你想要的新聞來源
-FEED_URL = "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml"
+FEED_URL = "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml"
 
 
 def fetch_feed(url):
@@ -21,7 +17,7 @@ def fetch_feed(url):
         return res.read()
 
 
-def parse_titles(xml_data, limit=5):
+def parse_titles(xml_data, limit=10):
     root = ET.fromstring(xml_data)
     titles = []
     for item in root.findall(".//item"):
@@ -33,39 +29,66 @@ def parse_titles(xml_data, limit=5):
     return titles
 
 
-# 🔥 用 Google 翻譯（免費，不用API）
-def translate(text):
-    try:
-        url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=zh-TW&dt=t&q=" + urllib.parse.quote(text)
-        with urllib.request.urlopen(url) as res:
-            result = eval(res.read().decode())
-            return result[0][0][0]
-    except:
-        return text  # 翻譯失敗就維持原文
+# 🔥 AI整理（核心）
+def summarize_with_ai(text):
+    api_key = os.environ.get("OPENAI_API_KEY")
+
+    url = "https://api.openai.com/v1/chat/completions"
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+
+    prompt = f"""
+請把以下新聞整理成每日財經重點：
+
+格式如下：
+📰 今日財經重點
+
+🌏 宏觀經濟
+👉 解讀
+
+📊 股市
+👉 解讀
+
+🏢 企業
+👉 解讀
+
+🌍 國際
+👉 解讀
+
+💰 利率
+👉 解讀
+
+🪙 加密貨幣
+👉 解讀
+
+要求：
+- 使用繁體中文
+- 像投資人看的摘要
+- 精簡但有重點
+
+新聞如下：
+{text}
+"""
+
+    data = {
+        "model": "gpt-4o-mini",
+        "messages": [{"role": "user", "content": prompt}],
+    }
+
+    response = requests.post(url, headers=headers, json=data)
+    return response.json()["choices"][0]["message"]["content"]
 
 
-def send_email(titles):
+def send_email(content):
     gmail = os.environ.get("GMAIL_ADDRESS")
     password = os.environ.get("GMAIL_APP_PASSWORD")
     to = os.environ.get("NEWS_RECIPIENT")
 
-    print("DEBUG:")
-    print("EMAIL:", gmail)
-    print("PASSWORD長度:", len(password) if password else 0)
-    print("TO:", to)
-
-    if not gmail or not password or not to:
-        raise Exception("❌ 環境變數沒抓到！")
-
-    # 👉 中文標題
-    translated = [translate(t) for t in titles]
-
-    content = "📢 今日新聞（中文）\n\n"
-    for i, t in enumerate(translated, 1):
-        content += f"{i}. {t}\n"
-
     msg = EmailMessage()
-    msg["Subject"] = "📢 今日新聞（自動寄送）"
+    msg["Subject"] = "📰 今日財經重點（自動寄送）"
     msg["From"] = gmail
     msg["To"] = to
     msg.set_content(content)
@@ -74,18 +97,15 @@ def send_email(titles):
         smtp.login(gmail, password)
         smtp.send_message(msg)
 
-    print("✅ Email sent!")
-
 
 def main():
     data = fetch_feed(FEED_URL)
     titles = parse_titles(data)
 
-    if not titles:
-        print("❌ 沒抓到新聞")
-        return
+    text = "\n".join(titles)
+    summary = summarize_with_ai(text)
 
-    send_email(titles)
+    send_email(summary)
 
 
 if __name__ == "__main__":
